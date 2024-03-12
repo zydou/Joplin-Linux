@@ -1,0 +1,76 @@
+---
+name: joplin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+  schedule:
+    - cron: 0 23 * * *
+
+permissions: write-all
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    name: check trigger
+    outputs:
+      trigger: ${{ steps.check.outputs.trigger }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: check if we need to trigger a build
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM: laurent22/joplin
+        run: |
+          VERSION=$(gh api "/repos/$UPSTREAM/releases/latest" --jq '.tag_name')
+          if ! gh api "/repos/${{github.repository}}/releases/tags/$VERSION" > /dev/null 2>&1; then
+          echo "trigger=true" >> "$GITHUB_OUTPUT"
+          echo "Build version=$VERSION"
+          else
+          echo "trigger=false" >> "$GITHUB_OUTPUT"
+          echo "Skip version=$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: trigger
+    if: needs.trigger.outputs.trigger == 'true'
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+      - name: build
+        env:
+          VERSION: ${{ needs.trigger.outputs.version }}
+        run: |
+          wget -q -O Joplin.AppImage "https://github.com/laurent22/joplin/releases/download/${VERSION}/Joplin-${VERSION#v}.AppImage"
+          chmod +x Joplin.AppImage
+          ./Joplin.AppImage --appimage-extract
+          mv squashfs-root joplin
+          mv joplin/AppRun joplin/joplin
+          tar -cJf joplin-${VERSION}-x86_64.tar.xz joplin
+
+      - name: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.trigger.outputs.version }}
+        run: |
+          gh release create "${VERSION}" --notes "Joplin Desktop ${VERSION}" --title "Joplin Desktop ${VERSION}" --repo "${{github.repository}}" || true
+          gh release upload "${VERSION}" "joplin-${VERSION}-x86_64.tar.xz" --repo "${{github.repository}}"
+
+          gh release create "joplin" --prerelease --notes "Joplin Desktop ${VERSION}" --title "Joplin Desktop ${VERSION}" --repo "${{github.repository}}" || true
+          gh release edit "joplin" --prerelease --notes "Joplin Desktop ${VERSION}" --title "Joplin Desktop ${VERSION}" --repo "${{github.repository}}" || true
+          mv joplin-${VERSION}-x86_64.tar.xz joplin-x86_64.tar.xz
+          gh release upload "joplin" "joplin-x86_64.tar.xz" --clobber --repo "${{github.repository}}"
+
+  keepalive-job:
+    name: Keepalive Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+      - uses: gautamkrishnar/keepalive-workflow@v2
