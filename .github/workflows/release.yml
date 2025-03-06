@@ -52,7 +52,6 @@ jobs:
           chmod +x Joplin.AppImage
           ./Joplin.AppImage --appimage-extract
           mv squashfs-root joplin
-          mv joplin/AppRun joplin/joplin
           tar -cJf joplin-${VERSION}-x86_64.tar.xz joplin
 
       - name: release
